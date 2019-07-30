@@ -69,7 +69,7 @@ setup(
     ],
 
     # What does your project relate to?
-    keywords='database mongo mongodb odm pymongo',
+    keywords='background task processing management',
 
     # You can just specify the packages manually here if your project is
     # simple. Or you can use find_packages().
