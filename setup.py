@@ -87,7 +87,7 @@ setup(
         'aioredis>=1.2.0',
         'botocore==1.12.91',
         'redis>=3.2.1',
-        'tornado>=6.0.3',
+        'tornado>=6.0.3'
     ],
 
     # List additional groups of dependencies here (e.g. development
