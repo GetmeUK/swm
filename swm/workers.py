@@ -145,7 +145,7 @@ class BaseWorker:
         # Unregister the worker
         self._conn.delete(self._id)
 
-    # Event broadcasting
+    # Event broadcasting and error handling
 
     def on_complete(self, task_id, data):
         """Broadcast a task completed event"""
@@ -156,6 +156,11 @@ class BaseWorker:
         """Broadcast a task error event"""
         event = TaskErrorEvent(task_id, str(error))
         self._conn.publish(self._broadcast_channel, event.dumps())
+
+    def on_spawn_error(error):
+        """Override this method to manage spawn errors"""
+        print(traceback.format_exc())
+        print(error)
 
     # Private
 
@@ -215,8 +220,7 @@ class BaseWorker:
 
                         # Report the error but allow the worker to continue to
                         # run.
-                        print(traceback.format_exc())
-                        print(e)
+                        self.on_spawn_error()
 
                         # Delay removing the population lock to ensure we
                         # don't end up in a race condition between
