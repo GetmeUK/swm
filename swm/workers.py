@@ -31,7 +31,8 @@ class BaseWorker:
         idle_lifespan=0,
         population_control=None,
         population_spawner=None,
-        population_lock_cool_off=60
+        population_lock_cool_off=60,
+        node_id=None
     ):
 
         # The redis connection (instance) to use for communicating with other
@@ -79,12 +80,20 @@ class BaseWorker:
         # an error occurred while spawning new workers.
         self._population_lock_cool_off = population_lock_cool_off
 
+        # A unique ID to identify the node (hardware device) this worker is
+        # running on.
+        self._node_id = node_id or uuid.getnode()
+
     def __str__(self):
         return self._id
 
     @property
     def id(self):
         return self._id
+
+    @property
+    def node_id(self):
+        return self._node_id
 
     def do_task(self, task):
         """Do the given task"""
@@ -119,6 +128,16 @@ class BaseWorker:
             id for id in self._conn.scan_iter(f'{self.get_id_prefix()}:*')
         ])
 
+    def get_node_workers(self, workers):
+        """
+        Filter a list of workers so that it only contains works on for this
+        workers node.
+        """
+        nodeset = self._conn.smembers(
+            f'{self.get_node_prefix()}{self.node_id}'
+        )
+        return [worker for worker in workers if worker in nodeset]
+
     def start(self):
         """Start the worker"""
 
@@ -127,6 +146,7 @@ class BaseWorker:
 
         # Register the worker
         self._conn.setex(self._id, self._max_status_interval, 'idle')
+        self._conn.sadd(f'{self.get_node_prefix()}{self.node_id}', self._id)
 
         # Start the main loop
         try:
@@ -144,6 +164,7 @@ class BaseWorker:
 
         # Unregister the worker
         self._conn.delete(self._id)
+        self._conn.srem(f'{self.get_node_prefix()}{self.node_id}', self._id)
 
     # Event broadcasting and error handling
 
@@ -176,6 +197,7 @@ class BaseWorker:
 
             # Get a lists of workers and the tasks to complete
             workers = self.get_workers()
+            node_workers = self.get_node_workers(workers)
             tasks = self.get_tasks()
 
             # If the worker is no longer registered then the main loop should
@@ -186,6 +208,7 @@ class BaseWorker:
             # Population check (growth and culling)
             population_change = self._population_control.population_change(
                 workers,
+                node_workers,
                 tasks
             )
             population_lock_key = self.get_population_lock_key()
@@ -303,6 +326,11 @@ class BaseWorker:
     def get_id_prefix(cls):
         """Return a prefix applied to worker Ids"""
         return 'swm_worker'
+
+    @classmethod
+    def get_node_prefix(cls):
+        """Return a prefix applied to worker Ids"""
+        return f'{cls.get_id_prefix()}_node'
 
     @classmethod
     def get_population_lock_key(cls):

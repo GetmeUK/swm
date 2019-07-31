@@ -1,5 +1,6 @@
 import math
 import os
+import psutil
 
 from . import BaseControl
 
@@ -13,6 +14,7 @@ class OnDemandControl(BaseControl):
         min_population=1,
         buffer_size=1,
         max_population=0,
+        max_node_population=None,
         max_spawn_rate=0
     ):
 
@@ -28,10 +30,17 @@ class OnDemandControl(BaseControl):
         # limit).
         self._max_population = max_population
 
+        # The maximum population of workers allowed on this node (if set to
+        # 0 there is no limit, if the value is left as None then we default
+        # to the number of available cores).
+        self._max_node_population = max_node_population
+        if self._max_node_population is None:
+            self._max_node_population = max(1, len(os.sched_getaffinity(0)))
+
         # The maximum number of workers to spawn in a spawning
         self._max_spawn_rate = max_spawn_rate
 
-    def population_change(self, workers, tasks):
+    def population_change(self, workers, node_workers, tasks):
 
         # Determine the number of unassigned tasks
         assigned = {}
@@ -51,11 +60,22 @@ class OnDemandControl(BaseControl):
         # Determine the required population size
         required_population = min(
             self._max_population or math.inf,
-            max(self._min_population, unassigned_tasks + self._buffer_size)
+            max(self._min_population, len(tasks) + self._buffer_size)
         )
 
-        # Return the population change required
-        return min(
+        # Calculate the required change in population
+        required_change = min(
             self._max_spawn_rate or math.inf,
             required_population - current_population
         )
+
+        # Determine the maximum node population
+        max_node_population = self._max_node_population or math.inf
+
+        # Apply any limits to the maximum node population
+        required_change = min(
+            max(0, max_node_population - len(node_workers)),
+            required_change
+        )
+
+        return required_change
