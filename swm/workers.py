@@ -157,7 +157,7 @@ class BaseWorker:
         event = TaskErrorEvent(task_id, str(error))
         self._conn.publish(self._broadcast_channel, event.dumps())
 
-    def on_spawn_error(error):
+    def on_spawn_error(self, error):
         """Override this method to manage spawn errors"""
         print(traceback.format_exc())
         print(error)
@@ -220,7 +220,7 @@ class BaseWorker:
 
                         # Report the error but allow the worker to continue to
                         # run.
-                        self.on_spawn_error()
+                        self.on_spawn_error(error)
 
                         # Delay removing the population lock to ensure we
                         # don't end up in a race condition between
