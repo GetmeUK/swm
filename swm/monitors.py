@@ -32,6 +32,10 @@ def get_workers(conn, worker_cls):
     """Return a list of active workers [(worker_id, status)]"""
     worker_prefix = worker_cls.get_id_prefix()
     worker_ids = set([id for id in conn.scan_iter(f'{worker_prefix}:*')])
+
+    if not worker_ids:
+        return []
+
     return sorted(
         zip(worker_ids, conn.mget(worker_ids)),
         key=operator.itemgetter(0)
