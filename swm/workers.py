@@ -283,37 +283,51 @@ class BaseWorker:
                         task.unassign()
 
                 # Check if the task is pending
-                if not task.assigned_to:
+                if not task.assigned_to and self._conn.exists(task.id):
 
-                    if self._conn.setnx(task.lock_key, self.id):
+                    # Attempt to aquire a lock for the task
+                    with self._conn.pipeline() as multi:
 
-                        # Assign the task to this worker
-                        task.assign_to(self._id)
-                        self._conn.set(task._id, task.dumps())
-
-                        # Update the workers status to busy
-                        self._conn.setex(
-                            self._id,
-                            self._max_status_interval,
-                            'busy'
-                        )
-
-                        # Process the task
                         try:
-                            event_data = self.do_task(task)
-                            self.on_complete(task.id, event_data)
+                            multi.watch(task.id)
+                            multi.setnx(task.lock_key, self.id)
+                            multi.execute()
 
-                        except Exception as e:
-                            self.on_error(task.id, e)
+                        except redis.WatchError:
+
+                            # Unable to aquire the lock so skip this task
+                            continue
 
                         finally:
+                            multi.reset()
 
-                            # Delete the task and associated lock
-                            self._conn.delete(task.id)
-                            self._conn.delete(task.lock_key)
+                    # Assign the task to this worker
+                    task.assign_to(self._id)
+                    self._conn.set(task._id, task.dumps())
 
-                            # Record the time at which the worker became idle
-                            self._idle_since = time.time()
+                    # Update the workers status to busy
+                    self._conn.setex(
+                        self._id,
+                        self._max_status_interval,
+                        'busy'
+                    )
+
+                    # Process the task
+                    try:
+                        event_data = self.do_task(task)
+                        self.on_complete(task.id, event_data)
+
+                    except Exception as e:
+                        self.on_error(task.id, e)
+
+                    finally:
+
+                        # Delete the task and associated lock
+                        self._conn.delete(task.id)
+                        self._conn.delete(task.lock_key)
+
+                        # Record the time at which the worker became idle
+                        self._idle_since = time.time()
 
             # Update the workers status to idle
             self._conn.setex(self._id, self._max_status_interval, 'idle')
