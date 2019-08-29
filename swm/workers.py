@@ -290,8 +290,11 @@ class BaseWorker:
 
                         try:
                             multi.watch(task.id)
-                            multi.setnx(task.lock_key, self.id)
+                            acquired = multi.setnx(task.lock_key, self.id)
                             multi.execute()
+
+                            if not acquired:
+                                continue
 
                         except redis.WatchError:
 
