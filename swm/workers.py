@@ -130,8 +130,8 @@ class BaseWorker:
 
     def get_node_workers(self, workers):
         """
-        Filter a list of workers so that it only contains works on for this
-        workers node.
+        Filter a list of workers so that it only contains workers on this
+        node.
         """
         nodeset = self._conn.smembers(
             f'{self.get_node_prefix()}{self.node_id}'
@@ -213,8 +213,6 @@ class BaseWorker:
             )
             population_lock_key = self.get_population_lock_key()
             time_idle = time.time() - self._idle_since
-
-            self._conn.delete(population_lock_key)
 
             if population_change > 0:
 
