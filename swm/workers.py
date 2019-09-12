@@ -244,7 +244,7 @@ class BaseWorker:
                         self.on_spawn_error(error)
 
                         # Delay removing the population lock to ensure we
-                        # don't end up in a race condition between
+                        # don't end up in a race condition between workers.
                         self._conn.expire(
                             population_lock_key,
                             self._population_lock_cool_off
