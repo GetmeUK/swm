@@ -130,8 +130,8 @@ class BaseWorker:
 
     def get_node_workers(self, workers):
         """
-        Filter a list of workers so that it only contains workers on this
-        node.
+        Filter a list of workers so that it only contains works on for this
+        workers node.
         """
         nodeset = self._conn.smembers(
             f'{self.get_node_prefix()}{self.node_id}'
@@ -149,6 +149,8 @@ class BaseWorker:
         self._conn.sadd(f'{self.get_node_prefix()}{self.node_id}', self._id)
 
         # Start the main loop
+        signal.signal(signal.SIGTERM, self.shut_down)
+
         try:
             self._idle_since = time.time()
             self._loop()
@@ -159,7 +161,7 @@ class BaseWorker:
         finally:
             self.shut_down()
 
-    def shut_down(self):
+    def shut_down(self, *args):
         """Shutdown the worker"""
 
         # Unregister the worker
@@ -214,6 +216,8 @@ class BaseWorker:
             population_lock_key = self.get_population_lock_key()
             time_idle = time.time() - self._idle_since
 
+            self._conn.delete(population_lock_key)
+
             if population_change > 0:
 
                 # Attempt to get a population lock so we can spawn new workers
@@ -244,7 +248,7 @@ class BaseWorker:
                         self.on_spawn_error(error)
 
                         # Delay removing the population lock to ensure we
-                        # don't end up in a race condition between workers.
+                        # don't end up in a race condition between
                         self._conn.expire(
                             population_lock_key,
                             self._population_lock_cool_off
