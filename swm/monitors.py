@@ -28,10 +28,14 @@ def get_tasks(conn, *task_cls_list):
 
     return sorted(tasks, key=operator.attrgetter('timestamp'))
 
-def get_workers(conn, worker_cls):
+def get_workers(conn, worker_cls, node_id=None):
     """Return a list of active workers [(worker_id, status)]"""
     worker_prefix = worker_cls.get_id_prefix()
     worker_ids = set([id for id in conn.scan_iter(f'{worker_prefix}:*')])
+
+    if node_id:
+        nodeset = conn.smembers(f'{worker_cls.get_node_prefix()}{node_id}')
+        worker_ids = [worker for worker in workers if worker in nodeset]
 
     if not worker_ids:
         return []
@@ -41,14 +45,14 @@ def get_workers(conn, worker_cls):
         key=operator.itemgetter(0)
     )
 
-def shutdown_workers(conn, worker_cls):
+def shutdown_workers(conn, worker_cls, node_id=None):
     """Shutdown all workers for the given worker class"""
 
     try:
-        conn.set(worker_cls.get_shutdown_key(), 'shutdown')
+        conn.set(worker_cls.get_shutdown_key(), node_id or '__shutdown__')
 
         while True:
-            workers = list(conn.scan_iter(f'{worker_cls.get_id_prefix()}:*'))
+            workers = get_workers(conn, worker_cls, node_id)
             if len(workers) == 0:
                 break
 

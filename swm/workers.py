@@ -82,7 +82,7 @@ class BaseWorker:
 
         # A unique ID to identify the node (hardware device) this worker is
         # running on.
-        self._node_id = node_id or uuid.getnode()
+        self._node_id = str(node_id or uuid.getnode())
 
     def __str__(self):
         return self._id
@@ -194,7 +194,8 @@ class BaseWorker:
 
             # Check to see if the shutdown flag is present for the worker
             # class.
-            if self._conn.get(self.get_shutdown_key()):
+            shutdown_key = self._conn.get(self.get_shutdown_key())
+            if shutdown_key in ['__shutdown__', self.node_id]:
                 return self.shut_down()
 
             # Get a lists of workers and the tasks to complete
