@@ -35,7 +35,7 @@ def get_workers(conn, worker_cls, node_id=None):
 
     if node_id:
         nodeset = conn.smembers(f'{worker_cls.get_node_prefix()}{node_id}')
-        worker_ids = [worker for worker in workers if worker in nodeset]
+        worker_ids = [id for id in worker_ids if id in nodeset]
 
     if not worker_ids:
         return []
