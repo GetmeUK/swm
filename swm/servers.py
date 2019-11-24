@@ -1,5 +1,6 @@
 import asyncio
 import json
+import time
 
 import aioredis
 import tornado.locks
@@ -94,8 +95,23 @@ class TaskEventListener:
         # from the worker network.
         self._condition = tornado.locks.Condition()
 
-        # A list of events received by the listener
+        # A table of events received by the listener
         self._received_events = {}
+
+    def _purge_expired_received_events(self):
+        """Purge received events that have expired from the table"""
+
+        for task_id, event_and_timestamp \
+                in list(self._received_events.items()):
+
+            event, timestamp = event_and_timestamp
+
+            print(task_id, timestamp)
+
+            if time.time() - timestamp > 10:
+                self._received_events.pop(task_id, None)
+
+                print(task_id)
 
     def get_event(self, task_id):
         """
@@ -103,7 +119,9 @@ class TaskEventListener:
         only be returned once, subsequent calls will return `None`).
         """
         if task_id in self._received_events:
-            return self._received_events.pop(task_id)
+            event_and_timestamp = self._received_events.pop(task_id, None)
+            if event_and_timestamp:
+                return event_and_timestamp[0]
 
     async def listen(self, conn, channel='swm_events'):
         """Listen for task events"""
@@ -127,7 +145,13 @@ class TaskEventListener:
 
                 # Store the event
                 event = event_cls.from_json_type(data)
-                self._received_events[event.task_id] = event
+                self._received_events[event.task_id] = (
+                    event,
+                    time.time()
+                )
 
                 # Notify all listeners that a new event has been received
                 self._condition.notify_all()
+
+            # Clean up
+            self._purge_expired_received_events()
