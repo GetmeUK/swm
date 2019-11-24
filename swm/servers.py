@@ -89,7 +89,7 @@ class TaskEventListener:
         'task_error': TaskErrorEvent
     }
 
-    def __init__(self):
+    def __init__(self, received_lifespan=60):
 
         # The lock used to allow request handlers to listen for a task event
         # from the worker network.
@@ -97,6 +97,10 @@ class TaskEventListener:
 
         # A table of events received by the listener
         self._received_events = {}
+
+        # The lifespan of a received event (during which it must be collected)
+        # before it is purged from the table of received events.
+        self._received_lifespan = received_lifespan
 
     def _purge_expired_received_events(self):
         """Purge received events that have expired from the table"""
@@ -106,12 +110,8 @@ class TaskEventListener:
 
             event, timestamp = event_and_timestamp
 
-            print(task_id, timestamp)
-
-            if time.time() - timestamp > 10:
+            if (time.time() - timestamp) > self._received_lifespan:
                 self._received_events.pop(task_id, None)
-
-                print(task_id)
 
     def get_event(self, task_id):
         """
