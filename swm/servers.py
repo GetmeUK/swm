@@ -54,13 +54,13 @@ class RequestHandler(tornado.web.RequestHandler):
         event = None
         while not event:
             self.wait_future = self.task_event_listener.wait()
-            
+
             try:
                 await self.wait_future
             except asyncio.CancelledError:
                 return
-            
-            event = self.task_event_listener.get_event(task.id) 
+
+            event = self.task_event_listener.get_event(task.id)
 
         if self.request.connection.stream.closed():
             return
@@ -79,8 +79,8 @@ class RequestHandler(tornado.web.RequestHandler):
 
 class TaskEventListener:
     """
-    The `TaskEventListener` class provides a fire and wait mechanism for 
-    request handlers posting tasks to the worker network. 
+    The `TaskEventListener` class provides a fire and wait mechanism for
+    request handlers posting tasks to the worker network.
     """
 
     EVENT_TYPES = {
@@ -90,18 +90,20 @@ class TaskEventListener:
 
     def __init__(self):
 
-        # The lock used to allow request handlers to listen for a task event 
+        # The lock used to allow request handlers to listen for a task event
         # from the worker network.
         self._condition = tornado.locks.Condition()
 
-        # The last event received by the listener
-        self._last_event = None
+        # A list of events received by the listener
+        self._received_events = {}
 
     def get_event(self, task_id):
-        """Return the last event if it matches the given task Id"""
-        if self._last_event:
-            if self._last_event.task_id == task_id:
-                return self._last_event
+        """
+        Return a received event if it matches the given task Id (the event can
+        only be returned once, subsequent calls will return `None`).
+        """
+        if task_id in self._received_events:
+            return self._received_events.pop(task_id)
 
     async def listen(self, conn, channel='swm_events'):
         """Listen for task events"""
@@ -124,7 +126,8 @@ class TaskEventListener:
             if event_cls:
 
                 # Store the event
-                self._last_event = event_cls.from_json_type(data)
+                event = event_cls.from_json_type(data)
+                self._received_events[event.task_id] = event
 
                 # Notify all listeners that a new event has been received
                 self._condition.notify_all()
