@@ -117,7 +117,10 @@ class BaseWorker:
             if not task_ids:
                 continue
 
-            tasks = [task_cls.loads(t) for t in self._conn.mget(task_ids)]
+            tasks = [
+                task_cls.loads(t)
+                for t in self._conn.mget(task_ids) if t
+            ]
             tasks_map.update(zip(task_ids, tasks))
 
         return tasks_map
@@ -187,6 +190,31 @@ class BaseWorker:
 
     # Private
 
+    def _acquire_lock(self, key, value, watch_key=None):
+        """Attempt to require a lock"""
+
+        watch_key = key if watch_key is None else watch_key
+
+        with self._conn.pipeline() as multi:
+
+            try:
+                multi.watch(watch_key)
+                acquired = multi.setnx(key, value)
+                multi.execute()
+
+                if not acquired:
+                    return False
+
+            except redis.WatchError:
+
+                # Unable to aquire the lock
+                return False
+
+            finally:
+                multi.reset()
+
+        return True
+
     def _loop(self):
         """The application loop"""
 
@@ -217,12 +245,12 @@ class BaseWorker:
             population_lock_key = self.get_population_lock_key()
             time_idle = time.time() - self._idle_since
 
-            self._conn.delete(population_lock_key)
+            # self._conn.delete(population_lock_key)
 
             if population_change > 0:
 
-                # Attempt to get a population lock so we can spawn new workers
-                if self._conn.setnx(population_lock_key, self.id):
+                # Attempt to aquire a lock so we can spawn new workers
+                if self._acquire_lock(population_lock_key, self.id):
                     try:
                         self._population_spawner.spawn(population_change)
 
@@ -240,28 +268,19 @@ class BaseWorker:
 
                             time.sleep(1)
 
-                        self._conn.delete(population_lock_key)
+                    except Exception as error:
 
-                    except Exception as e:
-
-                        # Report the error but allow the worker to continue to
-                        # run.
+                        # Report the error
                         self.on_spawn_error(error)
 
-                        # Delay removing the population lock to ensure we
-                        # don't end up in a race condition between
-                        self._conn.expire(
-                            population_lock_key,
-                            self._population_lock_cool_off
-                        )
-                        time.sleep(self._population_lock_cool_off)
+                    finally:
+                        self._conn.delete(population_lock_key)
 
             elif population_change < 0 \
                     and time_idle > (self._idle_lifespan or math.inf):
 
-                # Attempt to get a population lock so we can shut this worker
-                # down.
-                if self._conn.setnx(population_lock_key, self.id):
+                # Attempt to aquire lock so we can shut this worker down
+                if self._acquire_lock(population_lock_key, self.id):
                     try:
                         return self.shut_down()
 
@@ -288,24 +307,14 @@ class BaseWorker:
                 # Check if the task is pending
                 if not task.assigned_to and self._conn.exists(task.id):
 
-                    # Attempt to aquire a lock for the task
-                    with self._conn.pipeline() as multi:
-
-                        try:
-                            multi.watch(task.id)
-                            acquired = multi.setnx(task.lock_key, self.id)
-                            multi.execute()
-
-                            if not acquired:
-                                continue
-
-                        except redis.WatchError:
-
-                            # Unable to aquire the lock so skip this task
-                            continue
-
-                        finally:
-                            multi.reset()
+                    # Acquire a lock to perform the task
+                    acquired = self._acquire_lock(
+                        task.lock_key,
+                        self.id,
+                        task.id
+                    )
+                    if not acquired:
+                        continue
 
                     # Assign the task to this worker
                     task.assign_to(self._id)
