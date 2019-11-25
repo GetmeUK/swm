@@ -24,7 +24,10 @@ def get_tasks(conn, *task_cls_list):
         if not task_ids:
             continue
 
-        tasks.extend([task_cls.loads(t) for t in conn.mget(task_ids)])
+        tasks.extend([
+            task_cls.loads(t)
+            for t in conn.mget(task_ids) if t
+        ])
 
     return sorted(tasks, key=operator.attrgetter('timestamp'))
 
@@ -41,7 +44,7 @@ def get_workers(conn, worker_cls, node_id=None):
         return []
 
     return sorted(
-        zip(worker_ids, conn.mget(worker_ids)),
+        [w for w in zip(worker_ids, conn.mget(worker_ids)) if w[1]],
         key=operator.itemgetter(0)
     )
 
