@@ -31,7 +31,6 @@ class BaseWorker:
         idle_lifespan=0,
         population_control=None,
         population_spawner=None,
-        population_lock_cool_off=60,
         node_id=None
     ):
 
@@ -75,10 +74,6 @@ class BaseWorker:
 
         # The population spawner used to spawn new workers
         self._population_spawner = population_spawner or StaticSpawner()
-
-        # The period of wait before the population control lock is released if
-        # an error occurred while spawning new workers.
-        self._population_lock_cool_off = population_lock_cool_off
 
         # A unique ID to identify the node (hardware device) this worker is
         # running on.
