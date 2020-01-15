@@ -102,6 +102,13 @@ class TaskEventListener:
         # before it is purged from the table of received events.
         self._received_lifespan = received_lifespan
 
+        # The connection the task event listener is listening over
+        self._conn = None
+
+        # The channel the task event listener is listening to
+        self._channel = None
+
+
     def _purge_expired_received_events(self):
         """Purge received events that have expired from the table"""
 
@@ -125,6 +132,11 @@ class TaskEventListener:
 
     async def listen(self, conn, channel='swm_events'):
         """Listen for task events"""
+
+        # Store the connection and channel so we can attempt to reconnect
+        self._conn = conn
+        self._channel = channel
+
         asyncio.ensure_future(
             self._receive((await conn.subscribe(channel))[0])
         )
@@ -132,6 +144,18 @@ class TaskEventListener:
     def wait(self):
         """Wait for a task event"""
         return self._condition.wait()
+
+    async def _relisten(self, wait=1):
+        """Attempt to reconnect if the connection got closed"""
+
+        try:
+            asyncio.ensure_future(
+                self._receive((await self._conn.subscribe(self._channel))[0])
+            )
+
+        except ConnectionRefusedError as e:
+            time.sleep(wait)
+            await self._relisten(min(wait * 2, 60))
 
     async def _receive(self, channel):
         """Handle receiving an event (message) from redis"""
@@ -155,3 +179,5 @@ class TaskEventListener:
 
             # Clean up
             self._purge_expired_received_events()
+
+        await self._relisten()
