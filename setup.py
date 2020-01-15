@@ -84,7 +84,7 @@ setup(
     # requirements files see:
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=[
-        'aioredis>=1.2.0',
+        'aioredis>=1.3.1',
         'botocore==1.12.91',
         'psutil>=5.6.3',
         'redis>=3.2.1',
