@@ -188,12 +188,14 @@ class BaseWorker:
     def _acquire_lock(self, key, value, watch_key=None):
         """Attempt to require a lock"""
 
-        watch_key = key if watch_key is None else watch_key
+        watch_keys = [key]
+        if watch_key:
+            watch_keys.append(watch_key)
 
         with self._conn.pipeline() as multi:
 
             try:
-                multi.watch(watch_key)
+                multi.watch(*watch_keys)
                 acquired = multi.setnx(key, value)
                 multi.execute()
 
