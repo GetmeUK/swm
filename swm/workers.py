@@ -185,32 +185,37 @@ class BaseWorker:
 
     # Private
 
-    def _acquire_lock(self, key, value, watch_key=None):
-        """Attempt to require a lock"""
+    def _acquire_lock(self, key, value, task_id=None):
+        """Attempt to acquire a lock"""
 
         watch_keys = [key]
-        if watch_key:
-            watch_keys.append(watch_key)
+        if task_id:
+            watch_keys.append(task_id)
 
-        with self._conn.pipeline() as multi:
+        with self._conn.pipeline() as pipe:
 
             try:
-                multi.watch(*watch_keys)
-                acquired = multi.setnx(key, value)
-                multi.execute()
+                pipe.watch(*watch_keys)
 
-                if not acquired:
-                    return False
+                pipe.multi()
+                if task_id:
+                    pipe.get(task_id)
+                pipe.setnx(key, value)
+                result = pipe.execute()
+
+                if task_id:
+                    return result[0] is not None and result[1]
+
+                else:
+                    return result[0]
 
             except redis.WatchError:
-
-                # Unable to aquire the lock
-                return False
+                pass
 
             finally:
-                multi.reset()
+                pipe.reset()
 
-        return True
+        return False
 
     def _loop(self):
         """The application loop"""
@@ -241,8 +246,6 @@ class BaseWorker:
             )
             population_lock_key = self.get_population_lock_key()
             time_idle = time.time() - self._idle_since
-
-            # self._conn.delete(population_lock_key)
 
             if population_change > 0:
 
