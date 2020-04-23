@@ -201,6 +201,7 @@ class BaseWorker:
                 if task_id:
                     pipe.get(task_id)
                 pipe.setnx(key, value)
+                pipe.expire(key, self._max_status_interval)
                 result = pipe.execute()
 
                 if task_id:
