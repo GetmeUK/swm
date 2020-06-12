@@ -37,9 +37,6 @@ class Application(tornado.web.Application):
 
 class RequestHandler(tornado.web.RequestHandler):
 
-    def initialize(self):
-        self.wait_future = None
-
     @property
     def redis(self):
         return self.application.redis
@@ -74,7 +71,7 @@ class RequestHandler(tornado.web.RequestHandler):
 
     def on_connection_close(self):
         # Cancel any wait future
-        if self.wait_future:
+        if hasattr(self, 'wait_future') and self.wait_future:
             self.wait_future.cancel()
 
 
