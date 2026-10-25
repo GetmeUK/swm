@@ -2,7 +2,6 @@ import asyncio
 import json
 import time
 
-import aioredis
 import tornado.locks
 import tornado.web
 
