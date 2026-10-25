@@ -10,6 +10,5 @@ class BaseSpawner:
         raise NotImplemented()
 
 
-from . import aws
 from . import local
 from . import static

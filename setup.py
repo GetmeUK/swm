@@ -21,7 +21,7 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='0.0.18',
+    version='0.0.19',
     description=(
         'SWM (Server, Worker and Monitor/Manager), a cooperative'
         'approach to background task management for web applications.'
@@ -85,7 +85,6 @@ setup(
     # https://packaging.python.org/en/latest/requirements.html
     install_requires=[
         'aioredis>=1.3.1',
-        'botocore==1.12.91',
         'psutil>=5.6.3',
         'redis>=3.2.1',
         'tornado>=6.0.3'
