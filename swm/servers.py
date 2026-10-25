@@ -1,5 +1,7 @@
+
 import asyncio
 import json
+import logging
 import time
 
 import tornado.locks
@@ -12,6 +14,8 @@ __all__ = [
     'RequestHandler',
     'TaskEventListener'
 ]
+
+logger = logging.getLogger(__name__)
 
 
 class Application(tornado.web.Application):
@@ -29,7 +33,7 @@ class Application(tornado.web.Application):
         return self._task_event_listener
 
     async def listen_for_task_events(self, conn, channel='swm_events'):
-        """"""
+        """Start listening for task events."""
         self._task_event_listener = TaskEventListener()
         await self._task_event_listener.listen(conn, channel)
 
@@ -45,19 +49,39 @@ class RequestHandler(tornado.web.RequestHandler):
         return self.application.task_event_listener
 
     async def add_task_and_wait(self, task):
-        """Add a task to the heap and wait for an event"""
-        await self.redis.set(task.id, json.dumps(task.to_json_type()))
+        """Add a task to Redis and wait for its completion event."""
 
-        event = None
-        while not event:
+        await self.redis.set(
+            task.id,
+            json.dumps(task.to_json_type())
+        )
+
+        self.wait_future = None
+
+        while True:
+            # Check for events received before we started waiting
+            event = self.task_event_listener.get_event(task.id)
+
+            if event is not None:
+                break
+
+            # Register the waiter before checking again
             self.wait_future = self.task_event_listener.wait()
+
+            # Check again to avoid missing an event
+            event = self.task_event_listener.get_event(task.id)
+
+            if event is not None:
+                self.wait_future.cancel()
+                self.wait_future = None
+                break
 
             try:
                 await self.wait_future
             except asyncio.CancelledError:
                 return
-
-            event = self.task_event_listener.get_event(task.id)
+            finally:
+                self.wait_future = None
 
         if self.request.connection.stream.closed():
             return
@@ -65,19 +89,24 @@ class RequestHandler(tornado.web.RequestHandler):
         return event
 
     async def add_task_and_forget(self, task):
-        """Add a task to the heap and return (e.g don't wait)"""
-        await self.redis.set(task.id, json.dumps(task.to_json_type()))
+        """Add a task to Redis without waiting for its completion."""
+        await self.redis.set(
+            task.id,
+            json.dumps(task.to_json_type())
+        )
 
     def on_connection_close(self):
-        # Cancel any wait future
-        if hasattr(self, 'wait_future') and self.wait_future:
+        """Cancel any outstanding wait when the client disconnects."""
+        if getattr(self, 'wait_future', None):
             self.wait_future.cancel()
 
 
 class TaskEventListener:
     """
-    The `TaskEventListener` class provides a fire and wait mechanism for
-    request handlers posting tasks to the worker network.
+    Receives task events from Redis PubSub and notifies waiting
+    Tornado request handlers.
+
+    Compatible with redis.asyncio.
     """
 
     EVENT_TYPES = {
@@ -87,93 +116,175 @@ class TaskEventListener:
 
     def __init__(self, received_lifespan=60):
 
-        # The lock used to allow request handlers to listen for a task event
-        # from the worker network.
         self._condition = tornado.locks.Condition()
 
-        # A table of events received by the listener
+        # Received events waiting to be collected
         self._received_events = {}
-
-        # The lifespan of a received event (during which it must be collected)
-        # before it is purged from the table of received events.
         self._received_lifespan = received_lifespan
 
-        # The connection the task event listener is listening over
+        # Redis connection and PubSub channel
         self._conn = None
-
-        # The channel the task event listener is listening to
         self._channel = None
 
+        # Background listener task
+        self._listener_task = None
 
     def _purge_expired_received_events(self):
-        """Purge received events that have expired from the table"""
+        """Remove cached events that have expired."""
 
-        for task_id, event_and_timestamp \
-                in list(self._received_events.items()):
+        now = time.time()
 
-            event, timestamp = event_and_timestamp
-
-            if (time.time() - timestamp) > self._received_lifespan:
+        for task_id, (event, timestamp) in list(
+            self._received_events.items()
+        ):
+            if (now - timestamp) > self._received_lifespan:
                 self._received_events.pop(task_id, None)
 
     def get_event(self, task_id):
         """
-        Return a received event if it matches the given task Id (the event can
-        only be returned once, subsequent calls will return `None`).
+        Return and remove a received task event.
+
+        Each event can only be collected once.
         """
-        if task_id in self._received_events:
-            event_and_timestamp = self._received_events.pop(task_id, None)
-            if event_and_timestamp:
-                return event_and_timestamp[0]
+        self._purge_expired_received_events()
+
+        event_and_timestamp = self._received_events.pop(task_id, None)
+
+        if event_and_timestamp:
+            return event_and_timestamp[0]
+
+        return None
+
+    def wait(self):
+        """Wait until a new task event is received."""
+        return self._condition.wait()
 
     async def listen(self, conn, channel='swm_events'):
-        """Listen for task events"""
+        """
+        Start the Redis PubSub listener.
 
-        # Store the connection and channel so we can attempt to reconnect
+        Wait for the initial subscription to succeed so that
+        task events aren't missed during application startup.
+        """
+
         self._conn = conn
         self._channel = channel
 
-        asyncio.ensure_future(
-            self._receive((await conn.subscribe(channel))[0])
+        # Stop an existing listener before starting another
+        await self.stop()
+
+        ready = asyncio.get_running_loop().create_future()
+
+        self._listener_task = asyncio.create_task(
+            self._listen_loop(ready)
         )
 
-    def wait(self):
-        """Wait for a task event"""
-        return self._condition.wait()
+        await ready
 
-    async def _relisten(self, wait=1):
-        """Attempt to reconnect if the connection got closed"""
+    async def _listen_loop(self, ready):
+        """
+        Maintain the Redis subscription and reconnect on failure.
 
-        try:
-            asyncio.ensure_future(
-                self._receive((await self._conn.subscribe(self._channel))[0])
-            )
+        Uses exponential backoff when reconnection is needed.
+        """
 
-        except ConnectionRefusedError as e:
-            time.sleep(wait)
-            await self._relisten(min(wait * 2, 60))
+        retry_delay = 1
 
-    async def _receive(self, channel):
-        """Handle receiving an event (message) from redis"""
+        while True:
+            try:
+                async with self._conn.pubsub() as pubsub:
 
-        while await channel.wait_message():
-            data = await channel.get_json()
+                    await pubsub.subscribe(self._channel)
 
-            # Check we received a know event type
-            event_cls = self.EVENT_TYPES.get(data.get('type'))
-            if event_cls:
+                    logger.info(
+                        "Subscribed to Redis channel: %s",
+                        self._channel
+                    )
 
-                # Store the event
+                    retry_delay = 1
+
+                    if not ready.done():
+                        ready.set_result(True)
+
+                    await self._receive(pubsub)
+
+                    logger.warning(
+                        "Redis PubSub listener ended; reconnecting"
+                    )
+
+            except asyncio.CancelledError:
+                if not ready.done():
+                    ready.cancel()
+                raise
+
+            except Exception:
+                logger.exception(
+                    "Redis PubSub listener failed; retrying in %s seconds",
+                    retry_delay
+                )
+
+            await asyncio.sleep(retry_delay)
+
+            retry_delay = min(retry_delay * 2, 60)
+
+    async def _receive(self, pubsub):
+        """Receive and process task events from Redis PubSub."""
+
+        async for message in pubsub.listen():
+
+            # Ignore subscribe/unsubscribe notifications
+            if message.get('type') != 'message':
+                continue
+
+            try:
+                # Redis returns bytes by default
+                payload = message.get('data')
+
+                if isinstance(payload, bytes):
+                    payload = payload.decode('utf-8')
+
+                data = json.loads(payload)
+
+                # Find the matching event class
+                event_cls = self.EVENT_TYPES.get(data.get('type'))
+
+                if event_cls is None:
+                    logger.warning(
+                        "Unknown task event type: %s",
+                        data.get('type')
+                    )
+                    continue
+
+                # Deserialize the event
                 event = event_cls.from_json_type(data)
+
+                # Store it for waiting request handlers
                 self._received_events[event.task_id] = (
                     event,
                     time.time()
                 )
 
-                # Notify all listeners that a new event has been received
+                # Wake all waiting request handlers
                 self._condition.notify_all()
 
-            # Clean up
-            self._purge_expired_received_events()
+            except (ValueError, TypeError, KeyError, AttributeError):
+                logger.exception(
+                    "Unable to process Redis task event"
+                )
 
-        await self._relisten()
+            finally:
+                self._purge_expired_received_events()
+
+    async def stop(self):
+        """Stop the background listener and close its subscription."""
+
+        task = self._listener_task
+        self._listener_task = None
+
+        if task is not None:
+            task.cancel()
+
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass

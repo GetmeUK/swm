@@ -38,7 +38,7 @@ class BaseEvent:
         return cls(**data)
 
     @classmethod
-    def loads(cls):
+    def loads(cls, s):
         """Load a JSON string as an event"""
         return cls.from_json_type(json.loads(s))
 

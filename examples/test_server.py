@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-import redis.aioredis as aioredis
+import redis.asyncio as aioredis
 import swm
 
 from shared import MyTask, MyWorker
